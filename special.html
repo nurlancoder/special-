@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="author" content="Nurlan Mammadli">
+    <!-- Copyright (c) Nurlan Mammadli. All rights reserved. -->
+    <title>Hand Gesture Particle Control</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            font-family: Arial, sans-serif;
+        }
+        #webcam {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            width: 180px;
+            height: 135px;
+            border: 2px solid #00ffcc;
+            border-radius: 8px;
+            transform: scaleX(-1);
+            z-index: 10;
+            background-color: #111;
+        }
+        #error-msg {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ff4444;
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 10px;
+            font-size: 16px;
+            display: none;
+            text-align: center;
+            z-index: 100;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="error-msg">⚠️ Camera not detected or camera access denied!<br>Please allow camera access in your browser.</div>
+
+    <video id="webcam" autoplay playsinline muted></video>
+
+    <script>
+        const PARTICLE_COUNT = 8000;
+        let scene, camera, renderer, particles, geometry;
+        let currentPositions = new Float32Array(PARTICLE_COUNT * 3);
+        let targetPositions = new Float32Array(PARTICLE_COUNT * 3);
+        let currentColors = new Float32Array(PARTICLE_COUNT * 3);
+        let targetColors = new Float32Array(PARTICLE_COUNT * 3);
+        
+        let activeShapeIndex = 0;
+
+        
+        function getCloudPositions() {
+            const pos = new Float32Array(PARTICLE_COUNT * 3);
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                pos[i * 3] = (Math.random() - 0.5) * 15;
+                pos[i * 3 + 1] = (Math.random() - 0.5) * 15;
+                pos[i * 3 + 2] = (Math.random() - 0.5) * 15;
+            }
+            return pos;
+        }
+
+        function getHeartPositions() {
+            const pos = new Float32Array(PARTICLE_COUNT * 3);
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const t = Math.random() * Math.PI * 2;
+                const u = Math.random() * Math.PI - Math.PI / 2;
+                let x = 16 * Math.pow(Math.sin(t), 3);
+                let y = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+                let z = u * 2;
+                pos[i * 3] = x * 0.3;
+                pos[i * 3 + 1] = y * 0.3;
+                pos[i * 3 + 2] = z * 0.3;
+            }
+            return pos;
+        }
+
+        function getUranusPositions() {
+            const pos = new Float32Array(PARTICLE_COUNT * 3);
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                if (i < PARTICLE_COUNT * 0.45) {
+                    const u = Math.random() * Math.PI * 2;
+                    const v = Math.random() * Math.PI;
+                    const r = 2.5;
+                    pos[i * 3] = r * Math.sin(v) * Math.cos(u);
+                    pos[i * 3 + 1] = r * Math.sin(v) * Math.sin(u);
+                    pos[i * 3 + 2] = r * Math.cos(v);
+                } else {
+                    const theta = Math.random() * Math.PI * 2;
+                    const r = 3.8 + Math.random() * 2.8;
+                    pos[i * 3] = r * Math.cos(theta);
+                    pos[i * 3 + 1] = (Math.random() - 0.5) * 0.25;
+                    pos[i * 3 + 2] = r * Math.sin(theta);
+                }
+            }
+            return pos;
+        }
+
+        function getTextPositions() {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 600;
+            canvas.height = 120;
+
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 50px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('I LOVE YOU', 300, 75);
+
+            const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const validPixels = [];
+
+            for (let y = 0; y < canvas.height; y += 2) {
+                for (let x = 0; x < canvas.width; x += 2) {
+                    const index = (y * canvas.width + x) * 4;
+                    if (imgData.data[index] > 128) {
+                        validPixels.push({
+                            x: (x - canvas.width / 2) * 0.03,
+                            y: -(y - canvas.height / 2) * 0.03
+                        });
+                    }
+                }
+            }
+
+            const pos = new Float32Array(PARTICLE_COUNT * 3);
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const pt = validPixels[i % validPixels.length];
+                pos[i * 3] = pt.x + (Math.random() - 0.5) * 0.03;
+                pos[i * 3 + 1] = pt.y + (Math.random() - 0.5) * 0.03;
+                pos[i * 3 + 2] = (Math.random() - 0.5) * 0.1;
+            }
+            return pos;
+        }
+
+    
+        function getCloudColors() {
+            const col = new Float32Array(PARTICLE_COUNT * 3);
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                col[i * 3] = 0.2 + Math.random() * 0.8;
+                col[i * 3 + 1] = 0.2 + Math.random() * 0.8;
+                col[i * 3 + 2] = 0.5 + Math.random() * 0.5;
+            }
+            return col;
+        }
+
+        function getHeartColors() {
+            const col = new Float32Array(PARTICLE_COUNT * 3);
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                col[i * 3] = 0.9 + Math.random() * 0.1;
+                col[i * 3 + 1] = 0.05 + Math.random() * 0.15;
+                col[i * 3 + 2] = 0.1 + Math.random() * 0.25;
+            }
+            return col;
+        }
+
+        function getUranusColors() {
+            const col = new Float32Array(PARTICLE_COUNT * 3);
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                if (i < PARTICLE_COUNT * 0.45) {
+                    col[i * 3] = 0.35 + Math.random() * 0.15;
+                    col[i * 3 + 1] = 0.85 + Math.random() * 0.15;
+                    col[i * 3 + 2] = 0.9 + Math.random() * 0.1;
+                } else {
+                    col[i * 3] = 0.25 + Math.random() * 0.15;
+                    col[i * 3 + 1] = 0.75 + Math.random() * 0.2;
+                    col[i * 3 + 2] = 0.85 + Math.random() * 0.15;
+                }
+            }
+            return col;
+        }
+
+        function getTextColor() {
+            const col = new Float32Array(PARTICLE_COUNT * 3);
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                col[i * 3] = 0.0;
+                col[i * 3 + 1] = 1.0;
+                col[i * 3 + 2] = 0.8;
+            }
+            return col;
+        }
+
+        const shapes = [
+            getCloudPositions(),
+            getHeartPositions(),
+            getUranusPositions(),
+            getTextPositions()
+        ];
+
+        const shapeColors = [
+            getCloudColors(),
+            getHeartColors(),
+            getUranusColors(),
+            getTextColor()
+        ];
+
+        function initThreeJS() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 12;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(renderer.domElement);
+
+            geometry = new THREE.BufferGeometry();
+            const initialPos = shapes[0];
+            const initialCol = shapeColors[0];
+
+            for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
+                currentPositions[i] = initialPos[i];
+                targetPositions[i] = initialPos[i];
+                currentColors[i] = initialCol[i];
+                targetColors[i] = initialCol[i];
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(currentPositions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(currentColors, 3));
+
+            const material = new THREE.PointsMaterial({
+                size: 0.06,
+                vertexColors: true,
+                blending: THREE.AdditiveBlending,
+                transparent: true,
+                opacity: 0.85
+            });
+
+            particles = new THREE.Points(geometry, material);
+            scene.add(particles);
+
+            window.addEventListener('resize', onWindowResize);
+            animate();
+        }
+
+        function setShape(shapeIndex) {
+            if (activeShapeIndex === shapeIndex) return;
+            activeShapeIndex = shapeIndex;
+            
+            const targetPos = shapes[shapeIndex];
+            const targetCol = shapeColors[shapeIndex];
+
+            for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
+                targetPositions[i] = targetPos[i];
+                targetColors[i] = targetCol[i];
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const positions = geometry.attributes.position.array;
+            const colorsAttr = geometry.attributes.color.array;
+
+            for (let i = 0; i < PARTICLE_COUNT * 3; i++) {
+                positions[i] += (targetPositions[i] - positions[i]) * 0.1;
+                colorsAttr[i] += (targetColors[i] - colorsAttr[i]) * 0.1;
+            }
+            geometry.attributes.position.needsUpdate = true;
+            geometry.attributes.color.needsUpdate = true;
+
+            if (activeShapeIndex === 3) {
+                particles.rotation.x = THREE.MathUtils.lerp(particles.rotation.x, 0, 0.1);
+                particles.rotation.y = THREE.MathUtils.lerp(particles.rotation.y, 0, 0.1);
+                particles.rotation.z = THREE.MathUtils.lerp(particles.rotation.z, 0, 0.1);
+            } else if (activeShapeIndex === 1) {
+                particles.rotation.y += 0.01;
+                particles.rotation.x = THREE.MathUtils.lerp(particles.rotation.x, 0, 0.1);
+                particles.rotation.z = THREE.MathUtils.lerp(particles.rotation.z, 0, 0.1);
+            } else if (activeShapeIndex === 2) {
+                particles.rotation.y += 0.012;
+                particles.rotation.x += 0.008;
+                particles.rotation.z += 0.003;
+            } else {
+                particles.rotation.y += 0.005;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function detectGesture(landmarks) {
+            const isIndexOpen = landmarks[8].y < landmarks[6].y;
+            const isMiddleOpen = landmarks[12].y < landmarks[10].y;
+            const isRingOpen = landmarks[16].y < landmarks[14].y;
+            const isPinkyOpen = landmarks[20].y < landmarks[18].y;
+
+            if (isIndexOpen && isMiddleOpen && !isRingOpen && !isPinkyOpen) {
+                return 3;
+            }
+            if (isIndexOpen && !isMiddleOpen && !isRingOpen && !isPinkyOpen) {
+                return 2;
+            }
+            if (!isIndexOpen && !isMiddleOpen && !isRingOpen && !isPinkyOpen) {
+                return 1;
+            }
+            if (isIndexOpen && isMiddleOpen && isRingOpen && isPinkyOpen) {
+                return 0;
+            }
+
+            return activeShapeIndex;
+        }
+
+        function onResults(results) {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const shapeIndex = detectGesture(results.multiHandLandmarks[0]);
+                setShape(shapeIndex);
+            }
+        }
+
+        const videoElement = document.getElementById('webcam');
+        const errorMsg = document.getElementById('error-msg');
+
+        initThreeJS();
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
+        });
+
+        hands.onResults(onResults);
+
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then((stream) => {
+                videoElement.srcObject = stream;
+                const cameraUtils = new Camera(videoElement, {
+                    onFrame: async () => {
+                        await hands.send({ image: videoElement });
+                    },
+                    width: 480,
+                    height: 360
+                });
+                cameraUtils.start();
+            })
+            .catch((err) => {
+                console.error("Camera access denied or failed:", err);
+                errorMsg.style.display = "block";
+            });
+    </script>
+</body>
+</html>
